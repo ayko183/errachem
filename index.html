@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0F1923" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="ERRACHEM" />
+  <title>ERRACHEM</title>
+
+  <!-- PWA Manifest inline -->
+  <script>
+    const manifestData = {
+      name: "ERRACHEM",
+      short_name: "ERRACHEM",
+      description: "Compteur de score Rami - By AYKO",
+      start_url: "./",
+      display: "standalone",
+      background_color: "#0F1923",
+      theme_color: "#0F1923",
+      orientation: "portrait",
+      icons: [
+        { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='32' fill='%230F1923'/%3E%3Ctext x='96' y='130' font-size='110' text-anchor='middle'%3E🃏%3C/text%3E%3C/svg%3E", sizes: "192x192", type: "image/svg+xml" },
+        { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='80' fill='%230F1923'/%3E%3Ctext x='256' y='360' font-size='300' text-anchor='middle'%3E🃏%3C/text%3E%3C/svg%3E", sizes: "512x512", type: "image/svg+xml" }
+      ]
+    };
+    const blob = new Blob([JSON.stringify(manifestData)], {type: 'application/json'});
+    const manifestURL = URL.createObjectURL(blob);
+    document.addEventListener('DOMContentLoaded', () => {
+      const link = document.createElement('link');
+      link.rel = 'manifest';
+      link.href = manifestURL;
+      document.head.appendChild(link);
+    });
+  </script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0F1923;
+      color: #F5E6C8;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      overscroll-behavior: none;
+    }
+    #root { height: 100%; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React + Babel from CDN -->
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+  <script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
+
+
+const GAMES = [
+  { id: "rami", name: "Rami", icon: "🃏", available: true },
+  { id: "chkobba", name: "Chkobba", icon: "♠️", available: false },
+  { id: "belote", name: "Belote", icon: "♥️", available: false },
+];
+
+const PLAYER_COLORS = [
+  { bg: "#C0392B", light: "#E74C3C" },
+  { bg: "#1A5276", light: "#2471A3" },
+  { bg: "#1E8449", light: "#27AE60" },
+  { bg: "#6C3483", light: "#8E44AD" },
+];
+
+const CARD_SUIT = ["♠", "♥", "♦", "♣"];
+
+// ─── Storage helpers ──────────────────────────────────────────────────────────
+const STORAGE_KEY = "errachem-game-history";
+
+function loadAllSavedGames() {
+  try {
+    const result = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+    return result || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveGameRecord(record) {
+  try {
+    const existing = loadAllSavedGames();
+    const updated = [record, ...existing].slice(0, 50); // keep last 50
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.error("Save failed", e);
+  }
+}
+
+function formatDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" }) +
+    " · " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+// ─── UI Primitives ────────────────────────────────────────────────────────────
+
+function FloatingCards() {
+  return (
+    <div style={{ position: "fixed", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
+      {[...Array(12)].map((_, i) => (
+        <div key={i} style={{
+          position: "absolute", fontSize: `${16 + (i % 4) * 8}px`, opacity: 0.06,
+          color: i % 2 === 0 ? "#C0392B" : "#1A2535",
+          left: `${(i * 37 + 5) % 95}%`, top: `${(i * 29 + 10) % 90}%`,
+          animation: `float ${8 + (i % 5)}s ease-in-out infinite`,
+          animationDelay: `${i * 0.7}s`, transform: `rotate(${(i * 23) % 360}deg)`,
+          userSelect: "none",
+        }}>{CARD_SUIT[i % 4]}</div>
+      ))}
+    </div>
+  );
+}
+
+function Screen({ children, justify = "center" }) {
+  return (
+    <div style={{
+      minHeight: "100vh", background: "linear-gradient(145deg,#0F1923 0%,#1A2535 50%,#0F1923 100%)",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: justify,
+      padding: "24px 16px", position: "relative",
+    }}>
+      <FloatingCards />
+      <div style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: 420 }}>{children}</div>
+    </div>
+  );
+}
+
+function Logo({ compact = false }) {
+  return (
+    <div style={{ textAlign: "center", marginBottom: compact ? 20 : 36 }}>
+      <div style={{ fontSize: compact ? 40 : 52, marginBottom: 6, filter: "drop-shadow(0 4px 16px rgba(192,57,43,0.6))" }}>🃏</div>
+      <h1 style={{
+        fontFamily: "Georgia,serif", fontSize: compact ? 26 : 34, fontWeight: 900,
+        color: "#F5E6C8", margin: 0, letterSpacing: "0.12em",
+        textShadow: "0 2px 16px rgba(192,57,43,0.5)",
+        textTransform: "uppercase",
+      }}>ERRACHEM</h1>
+      <p style={{ color: "#5A6A7A", fontSize: 11, margin: "3px 0 0", letterSpacing: "0.18em" }}>By AYKO</p>
+    </div>
+  );
+}
+
+function Card({ children, style }) {
+  return (
+    <div style={{
+      background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
+      borderRadius: 20, padding: 24, backdropFilter: "blur(12px)",
+      boxShadow: "0 8px 32px rgba(0,0,0,0.3)", ...style,
+    }}>{children}</div>
+  );
+}
+
+function Btn({ children, onClick, variant = "primary", style, disabled }) {
+  const v = {
+    primary: { background: "linear-gradient(135deg,#C0392B,#E74C3C)", color: "#fff", border: "none", boxShadow: "0 4px 16px rgba(192,57,43,0.4)" },
+    ghost:   { background: "transparent", color: "#8BA0B2", border: "1px solid rgba(255,255,255,0.1)" },
+    green:   { background: "linear-gradient(135deg,#1E8449,#27AE60)", color: "#fff", border: "none", boxShadow: "0 4px 16px rgba(39,174,96,0.4)" },
+  };
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      padding: "14px 24px", borderRadius: 14, fontSize: 15, fontWeight: 700,
+      cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
+      transition: "all 0.2s", width: "100%", letterSpacing: "0.02em", fontFamily: "inherit",
+      ...v[variant], ...style,
+    }}>{children}</button>
+  );
+}
+
+// ─── Saved History Browser ────────────────────────────────────────────────────
+function SavedHistoryScreen({ onBack }) {
+  const [games, setGames] = useState(null); // null = loading
+  const [selected, setSelected] = useState(null); // selected game record
+
+  useEffect(() => {
+    setGames(loadAllSavedGames());
+  }, []);
+
+  if (selected) {
+    return <SavedGameDetail record={selected} onBack={() => setSelected(null)} />;
+  }
+
+  return (
+    <Screen justify="flex-start">
+      <div style={{ paddingTop: 16 }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: "#8BA0B2", fontSize: 14, cursor: "pointer", marginBottom: 20, padding: 0, display: "flex", alignItems: "center", gap: 6 }}>← Retour</button>
+        <Logo compact />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <h2 style={{ color: "#F5E6C8", fontSize: 20, fontWeight: 800, margin: 0 }}>📋 Historique des parties</h2>
+        </div>
+
+        {games === null && (
+          <div style={{ textAlign: "center", padding: 40, color: "#8BA0B2" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>Chargement...
+          </div>
+        )}
+        {games !== null && games.length === 0 && (
+          <Card>
+            <div style={{ textAlign: "center", padding: 20, color: "#8BA0B2" }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🎲</div>
+              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6, color: "#F5E6C8" }}>Aucune partie sauvegardée</div>
+              <div style={{ fontSize: 13 }}>Les parties terminées apparaîtront ici automatiquement.</div>
+            </div>
+          </Card>
+        )}
+        {games !== null && games.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {games.map((g, idx) => (
+              <button key={idx} onClick={() => setSelected(g)} style={{
+                background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)",
+                borderRadius: 16, padding: "16px 18px", cursor: "pointer", textAlign: "left",
+                transition: "all 0.2s",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 20 }}>{GAMES.find(x => x.id === g.gameId)?.icon || "🃏"}</span>
+                    <span style={{ color: "#F5E6C8", fontSize: 15, fontWeight: 700 }}>{g.gameName}</span>
+                    <span style={{ background: "rgba(192,57,43,0.2)", color: "#E74C3C", fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 8 }}>
+                      {g.rounds} tours
+                    </span>
+                  </div>
+                  <span style={{ color: "#4A6078", fontSize: 11 }}>›</span>
+                </div>
+                <div style={{ color: "#8BA0B2", fontSize: 12, marginBottom: 8 }}>📅 {formatDate(g.date)}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {g.rankings.map((p, ri) => (
+                    <div key={ri} style={{
+                      display: "flex", alignItems: "center", gap: 5,
+                      background: p.isOut ? "rgba(255,255,255,0.03)" : `${PLAYER_COLORS[p.colorIdx]?.bg}22`,
+                      border: `1px solid ${p.isOut ? "rgba(255,255,255,0.07)" : PLAYER_COLORS[p.colorIdx]?.bg + "55"}`,
+                      borderRadius: 8, padding: "4px 8px",
+                    }}>
+                      <span style={{ fontSize: 11 }}>{ri === 0 ? "🥇" : ri === 1 ? "🥈" : ri === 2 ? "💀" : "☠️"}</span>
+                      <span style={{ color: p.isOut ? "#4A6078" : "#F5E6C8", fontSize: 12, fontWeight: 600 }}>{p.name}</span>
+                      {!p.isOut && <span style={{ color: "#27AE60", fontSize: 11, fontWeight: 700 }}>{p.score}</span>}
+                    </div>
+                  ))}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </Screen>
+  );
+}
+
+function SavedGameDetail({ record, onBack }) {
+  const players = record.players;
+  const history = record.history;
+  const colors = PLAYER_COLORS;
+
+  return (
+    <Screen justify="flex-start">
+      <div style={{ paddingTop: 16 }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: "#8BA0B2", fontSize: 14, cursor: "pointer", marginBottom: 20, padding: 0, display: "flex", alignItems: "center", gap: 6 }}>← Retour</button>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ color: "#F5E6C8", fontSize: 18, fontWeight: 800 }}>{record.gameName} · {record.rounds} tours</div>
+          <div style={{ color: "#8BA0B2", fontSize: 12, marginTop: 3 }}>📅 {formatDate(record.date)}</div>
+        </div>
+
+        {/* Résultat */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+          {record.winners.map((w, i) => (
+            <div key={i} style={{ flex: 1, background: `${PLAYER_COLORS[w.colorIdx]?.bg}22`, border: `1px solid ${PLAYER_COLORS[w.colorIdx]?.bg}66`, borderRadius: 14, padding: "12px", textAlign: "center" }}>
+              <div style={{ fontSize: 18 }}>{i === 0 ? "🥇" : "🥈"}</div>
+              <div style={{ color: "#F5E6C8", fontSize: 13, fontWeight: 700, marginTop: 4 }}>{w.name}</div>
+              <div style={{ color: "#27AE60", fontSize: 18, fontWeight: 900, fontFamily: "Georgia,serif" }}>{w.score}</div>
+            </div>
+          ))}
+          {record.losers.map((l, i) => (
+            <div key={i} style={{ flex: 1, background: "rgba(192,57,43,0.08)", border: "1px solid rgba(192,57,43,0.2)", borderRadius: 14, padding: "12px", textAlign: "center", opacity: 0.7 }}>
+              <div style={{ fontSize: 18 }}>{i === 0 ? "💀" : "☠️"}</div>
+              <div style={{ color: "#6B7A8A", fontSize: 13, fontWeight: 700, marginTop: 4 }}>{l.name}</div>
+              <div style={{ color: "#4A5568", fontSize: 14, letterSpacing: "0.1em" }}>— — —</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Tableau historique */}
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", minWidth: "100%" }}>
+              <thead>
+                <tr style={{ background: "rgba(0,0,0,0.3)" }}>
+                  <th style={{ padding: "10px 14px", color: "#8BA0B2", fontSize: 12, textAlign: "left", fontWeight: 600, position: "sticky", left: 0, background: "rgba(15,25,35,0.98)", zIndex: 2, minWidth: 100 }}>JOUEUR</th>
+                  {history.filter(h => h.type === "round").map((_, ri) => (
+                    <th key={ri} style={{ padding: "10px 12px", color: "#8BA0B2", fontSize: 12, fontWeight: 600, textAlign: "center", whiteSpace: "nowrap" }}>T{ri + 1}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {players.map((player, pi) => (
+                  <tr key={pi} style={{ borderTop: "1px solid rgba(255,255,255,0.05)", background: pi % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)" }}>
+                    <td style={{ padding: "10px 14px", position: "sticky", left: 0, zIndex: 1, background: pi % 2 === 0 ? "#1A2535" : "#1c2840" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                        <div style={{ width: 22, height: 22, borderRadius: 6, background: colors[pi]?.bg || "#666", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff" }}>{player.name[0].toUpperCase()}</div>
+                        <span style={{ color: "#F5E6C8", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>{player.name}</span>
+                      </div>
+                    </td>
+                    {history.filter(h => h.type === "round").map((row, ri) => {
+                      const entry = row.entries[pi];
+                      if (player.isOut && player.outAtTour !== null && ri >= player.outAtTour) {
+                        return <td key={ri} style={{ padding: "8px 12px", textAlign: "center", color: "#3A4A5A", fontSize: 13, letterSpacing: "0.08em" }}>— — —</td>;
+                      }
+                      if (!entry) return <td key={ri} style={{ padding: "8px 12px", textAlign: "center", color: "#4A5568" }}>—</td>;
+                      const { delta, cumul, event, gajiNewCumul, gajiLabel } = entry;
+                      let dColor = "#8BA0B2";
+                      if (delta === -10) dColor = "#27AE60";
+                      else if (delta === 100) dColor = "#E74C3C";
+                      else if (delta < 0) dColor = "#27AE60";
+                      else if (delta > 0) dColor = "#E07B54";
+                      const isBust = event === "gaji_exceeded";
+                      return (
+                        <td key={ri} style={{ padding: "8px 12px", textAlign: "center", verticalAlign: "top" }}>
+                          <div style={{ color: isBust ? "#fff" : "#F5E6C8", fontSize: 13, fontWeight: 800, fontFamily: "Georgia,serif", background: isBust ? "rgba(192,57,43,0.75)" : "transparent", borderRadius: isBust ? 5 : 0, padding: isBust ? "1px 5px" : 0, display: "inline-block" }}>{cumul}</div>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: dColor, marginTop: 1 }}>{delta > 0 ? `+${delta}` : delta}</div>
+                          {event === "quit" && <div style={{ fontSize: 9, color: "#6B7A8A", marginTop: 1 }}>🚪</div>}
+                          {isBust && gajiNewCumul !== undefined && (
+                            <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(192,57,43,0.3)" }}>
+                              <div style={{ fontSize: 12, fontWeight: 800, color: "#E74C3C", fontFamily: "Georgia,serif" }}>{gajiNewCumul}</div>
+                              <div style={{ fontSize: 9, color: "#E74C3C", fontWeight: 700 }}>🔥 {gajiLabel}</div>
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+    </Screen>
+  );
+}
+
+// ─── Screen 1: Game Select ────────────────────────────────────────────────────
+function GameSelectScreen({ onSelect, onShowHistory }) {
+  return (
+    <Screen>
+      <Logo />
+      <Card style={{ marginBottom: 12 }}>
+        <h2 style={{ color: "#F5E6C8", fontSize: 18, fontWeight: 700, margin: "0 0 16px", textAlign: "center" }}>Choisir le jeu</h2>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {GAMES.map(g => (
+            <button key={g.id} onClick={() => g.available && onSelect(g)} style={{
+              display: "flex", alignItems: "center", gap: 16, padding: "16px 18px", borderRadius: 14,
+              border: g.available ? "1px solid rgba(192,57,43,0.4)" : "1px solid rgba(255,255,255,0.06)",
+              background: g.available ? "linear-gradient(135deg,rgba(192,57,43,0.15),rgba(231,76,60,0.08))" : "rgba(255,255,255,0.03)",
+              cursor: g.available ? "pointer" : "not-allowed", opacity: g.available ? 1 : 0.4, textAlign: "left",
+            }}>
+              <span style={{ fontSize: 30 }}>{g.icon}</span>
+              <div>
+                <div style={{ color: "#F5E6C8", fontSize: 16, fontWeight: 700 }}>{g.name}</div>
+                {!g.available && <div style={{ color: "#8BA0B2", fontSize: 12 }}>Bientôt disponible</div>}
+              </div>
+              {g.available && <div style={{ marginLeft: "auto", color: "#C0392B", fontSize: 20 }}>›</div>}
+            </button>
+          ))}
+        </div>
+      </Card>
+      <button onClick={onShowHistory} style={{
+        width: "100%", padding: "14px", borderRadius: 14,
+        background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
+        color: "#8BA0B2", fontSize: 14, fontWeight: 600, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+        transition: "all 0.2s",
+      }}>
+        <span>📋</span> Historique des parties
+      </button>
+    </Screen>
+  );
+}
+
+// ─── Screen 2 ─────────────────────────────────────────────────────────────────
+function PlayerCountScreen({ game, onSelect, onBack }) {
+  return (
+    <Screen>
+      <button onClick={onBack} style={{ background: "none", border: "none", color: "#8BA0B2", fontSize: 14, cursor: "pointer", marginBottom: 20, padding: 0, display: "flex", alignItems: "center", gap: 6 }}>← Retour</button>
+      <div style={{ textAlign: "center", marginBottom: 32 }}>
+        <div style={{ fontSize: 48, marginBottom: 8 }}>{game.icon}</div>
+        <h2 style={{ color: "#F5E6C8", fontSize: 24, fontWeight: 800, margin: 0 }}>{game.name}</h2>
+        <p style={{ color: "#8BA0B2", fontSize: 14, margin: "6px 0 0" }}>Nombre de joueurs</p>
+      </div>
+      <div style={{ display: "flex", gap: 12 }}>
+        {[2, 3, 4].map(n => (
+          <button key={n} onClick={() => onSelect(n)} style={{
+            flex: 1, padding: "32px 8px", borderRadius: 20,
+            border: "1px solid rgba(192,57,43,0.3)",
+            background: "linear-gradient(145deg,rgba(192,57,43,0.12),rgba(0,0,0,0.2))",
+            cursor: "pointer", color: "#F5E6C8",
+          }}>
+            <div style={{ fontSize: 40, fontWeight: 900, fontFamily: "Georgia,serif", color: "#E74C3C", lineHeight: 1 }}>{n}</div>
+            <div style={{ fontSize: 12, color: "#8BA0B2", marginTop: 8 }}>joueurs</div>
+          </button>
+        ))}
+      </div>
+    </Screen>
+  );
+}
+
+// ─── Screen 3 ─────────────────────────────────────────────────────────────────
+function PlayerNamesScreen({ game, playerCount, onStart, onBack }) {
+  const [names, setNames] = useState(Array.from({ length: playerCount }, (_, i) => `Joueur ${i + 1}`));
+  const [maxScore, setMaxScore] = useState("500");
+  const ok = names.every(n => n.trim()) && parseInt(maxScore) > 0;
+
+  return (
+    <Screen>
+      <button onClick={onBack} style={{ background: "none", border: "none", color: "#8BA0B2", fontSize: 14, cursor: "pointer", marginBottom: 20, padding: 0, display: "flex", alignItems: "center", gap: 6 }}>← Retour</button>
+      <div style={{ textAlign: "center", marginBottom: 24 }}>
+        <h2 style={{ color: "#F5E6C8", fontSize: 22, fontWeight: 800, margin: 0 }}>Configuration</h2>
+        <p style={{ color: "#8BA0B2", fontSize: 13, margin: "6px 0 0" }}>{playerCount} joueurs · {game.name}</p>
+      </div>
+      <Card>
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ color: "#8BA0B2", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 10 }}>🏁 SCORE MAXIMUM</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <input type="number" value={maxScore} onChange={e => setMaxScore(e.target.value)}
+              style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(192,57,43,0.4)", background: "rgba(192,57,43,0.08)", color: "#F5E6C8", fontSize: 20, fontWeight: 700, fontFamily: "inherit", outline: "none", textAlign: "center" }} />
+            <div style={{ color: "#8BA0B2", fontSize: 14, whiteSpace: "nowrap" }}>pts max</div>
+          </div>
+          <div style={{ color: "#4A6078", fontSize: 11, marginTop: 6, textAlign: "center" }}>Dépasser ce score → Tgaji ?</div>
+        </div>
+        <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginBottom: 20 }} />
+        <div style={{ color: "#8BA0B2", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 10 }}>👤 NOMS DES JOUEURS</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+          {names.map((name, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 11 }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: PLAYER_COLORS[i].bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 800, color: "#fff", fontFamily: "Georgia,serif" }}>{i + 1}</div>
+              <input value={name} onChange={e => { const a = [...names]; a[i] = e.target.value; setNames(a); }}
+                placeholder={`Joueur ${i + 1}`}
+                style={{ flex: 1, padding: "11px 14px", borderRadius: 11, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.06)", color: "#F5E6C8", fontSize: 15, fontFamily: "inherit", outline: "none" }} />
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 22 }}>
+          <Btn onClick={() => onStart(names, parseInt(maxScore))} disabled={!ok}>Commencer la partie 🎮</Btn>
+        </div>
+      </Card>
+    </Screen>
+  );
+}
+
+// ─── Score Modal ──────────────────────────────────────────────────────────────
+function ScoreModal({ player, color, onClose, onSubmit, isEdit, currentDelta }) {
+  const detectMode = (d) => { if (d === -10) return "frech"; if (d === 100) return "cabbout"; if (d !== undefined && d !== null) return "custom"; return null; };
+  const [mode, setMode] = useState(isEdit ? detectMode(currentDelta) : null);
+  const [pts, setPts] = useState(isEdit && detectMode(currentDelta) === "custom" ? String(currentDelta) : "");
+  const canSubmit = mode === "frech" || mode === "cabbout" || (mode === "custom" && pts !== "" && !isNaN(parseInt(pts)));
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "flex-end", justifyContent: "center", backdropFilter: "blur(4px)" }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#1A2535", borderRadius: "28px 28px 0 0", padding: "28px 24px 40px", width: "100%", maxWidth: 440, border: "1px solid rgba(255,255,255,0.1)", borderBottom: "none", animation: "slideUp 0.3s ease-out" }}>
+        <div style={{ width: 40, height: 4, background: "rgba(255,255,255,0.2)", borderRadius: 2, margin: "0 auto 20px" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+          <div style={{ width: 48, height: 48, borderRadius: 14, background: color.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 900, color: "#fff", fontFamily: "Georgia,serif" }}>{player.name[0].toUpperCase()}</div>
+          <div>
+            <div style={{ color: "#F5E6C8", fontSize: 17, fontWeight: 700 }}>{player.name}</div>
+            <div style={{ color: "#8BA0B2", fontSize: 12 }}>Score actuel : <span style={{ color: "#DAA520", fontWeight: 700 }}>{player.score}</span> pts</div>
+            {isEdit && currentDelta !== null && <div style={{ color: "#8BA0B2", fontSize: 12 }}>Saisie : <span style={{ color: currentDelta <= 0 ? "#27AE60" : "#E74C3C", fontWeight: 700 }}>{currentDelta > 0 ? "+" : ""}{currentDelta}</span></div>}
+          </div>
+          {isEdit && <div style={{ marginLeft: "auto", background: "rgba(218,165,32,0.15)", border: "1px solid rgba(218,165,32,0.3)", borderRadius: 10, padding: "4px 10px", color: "#DAA520", fontSize: 11, fontWeight: 700 }}>✏️ Modifier</div>}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 18 }}>
+          <button onClick={() => setMode(mode === "frech" ? null : "frech")} style={{ padding: "14px 18px", borderRadius: 14, border: `2px solid ${mode === "frech" ? "#27AE60" : "rgba(255,255,255,0.1)"}`, background: mode === "frech" ? "rgba(39,174,96,0.2)" : "rgba(255,255,255,0.04)", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div><div style={{ color: "#F5E6C8", fontSize: 15, fontWeight: 700 }}>🟢 Frech</div><div style={{ color: "#8BA0B2", fontSize: 11 }}>Bonne pioche !</div></div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: "#27AE60", background: "rgba(39,174,96,0.15)", padding: "3px 10px", borderRadius: 7 }}>−10 pts</div>
+          </button>
+          <button onClick={() => setMode(mode === "cabbout" ? null : "cabbout")} style={{ padding: "14px 18px", borderRadius: 14, border: `2px solid ${mode === "cabbout" ? "#E74C3C" : "rgba(255,255,255,0.1)"}`, background: mode === "cabbout" ? "rgba(192,57,43,0.2)" : "rgba(255,255,255,0.04)", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div><div style={{ color: "#F5E6C8", fontSize: 15, fontWeight: 700 }}>🔴 Cabbout</div><div style={{ color: "#8BA0B2", fontSize: 11 }}>Pénalité lourde</div></div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: "#E74C3C", background: "rgba(192,57,43,0.15)", padding: "3px 10px", borderRadius: 7 }}>+100 pts</div>
+          </button>
+          <button onClick={() => setMode(mode === "custom" ? null : "custom")} style={{ padding: "14px 18px", borderRadius: 14, border: `2px solid ${mode === "custom" ? "#2471A3" : "rgba(255,255,255,0.1)"}`, background: mode === "custom" ? "rgba(26,82,118,0.2)" : "rgba(255,255,255,0.04)", cursor: "pointer", textAlign: "left" }}>
+            <div style={{ color: "#F5E6C8", fontSize: 15, fontWeight: 700 }}>✏️ Points manuels</div>
+            <div style={{ color: "#8BA0B2", fontSize: 11 }}>Saisir le nombre de points</div>
+          </button>
+        </div>
+        {mode === "custom" && (
+          <div style={{ marginBottom: 14 }}>
+            <input autoFocus type="number" value={pts} onChange={e => setPts(e.target.value)} placeholder="Ex: 45 ou -20"
+              style={{ width: "100%", padding: "14px", borderRadius: 12, border: "1px solid rgba(36,113,163,0.6)", background: "rgba(36,113,163,0.1)", color: "#F5E6C8", fontSize: 22, fontWeight: 700, textAlign: "center", fontFamily: "inherit", outline: "none", boxSizing: "border-box" }} />
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn variant="ghost" onClick={onClose} style={{ flex: 1 }}>Annuler</Btn>
+          <Btn onClick={() => { if (mode === "frech") onSubmit(-10); else if (mode === "cabbout") onSubmit(100); else if (mode === "custom") onSubmit(parseInt(pts)); }} disabled={!canSubmit} style={{ flex: 2 }}>{isEdit ? "Modifier" : "Confirmer"}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Tgaji Modal ──────────────────────────────────────────────────────────────
+function TgajiModal({ player, color, scoreAtLimit, worstScore, onGaji, onQuit }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.9)", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(8px)", padding: 20 }}>
+      <div style={{ background: "linear-gradient(145deg,#1A2535,#0F1923)", borderRadius: 28, padding: "32px 28px", width: "100%", maxWidth: 400, border: "2px solid rgba(192,57,43,0.5)", boxShadow: "0 0 60px rgba(192,57,43,0.3),0 20px 60px rgba(0,0,0,0.7)", textAlign: "center", animation: "pulseIn 0.4s ease-out" }}>
+        <div style={{ fontSize: 56, marginBottom: 12 }}>💀</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 20 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 13, background: color.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "#fff", fontFamily: "Georgia,serif" }}>{player.name[0].toUpperCase()}</div>
+          <div style={{ textAlign: "left" }}>
+            <div style={{ color: "#F5E6C8", fontSize: 18, fontWeight: 800 }}>{player.name}</div>
+            <div style={{ color: "#E74C3C", fontSize: 13, fontWeight: 700 }}>Score dépassé : <span style={{ fontFamily: "Georgia,serif", fontSize: 16 }}>{scoreAtLimit}</span> pts</div>
+          </div>
+        </div>
+        <div style={{ background: "rgba(192,57,43,0.12)", border: "1px solid rgba(192,57,43,0.3)", borderRadius: 18, padding: "18px 16px", marginBottom: 24 }}>
+          <div style={{ color: "#F5E6C8", fontSize: 24, fontWeight: 900, fontFamily: "Georgia,serif", marginBottom: 8 }}>Tgaji ? 🃏</div>
+          <div style={{ color: "#8BA0B2", fontSize: 13, lineHeight: 1.6 }}>En acceptant, tu reçois le score le plus élevé :<br /><span style={{ color: "#E74C3C", fontWeight: 800, fontSize: 18 }}>{worstScore} pts</span></div>
+        </div>
+        <div style={{ display: "flex", gap: 12 }}>
+          <button onClick={onQuit} style={{ flex: 1, padding: "16px 10px", borderRadius: 16, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.06)", color: "#8BA0B2", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>❌ Non<br /><span style={{ fontSize: 11 }}>Quitter</span></button>
+          <button onClick={onGaji} style={{ flex: 1, padding: "16px 10px", borderRadius: 16, background: "linear-gradient(135deg,#C0392B,#E74C3C)", border: "none", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: "0 4px 20px rgba(192,57,43,0.5)" }}>✅ Oui<br /><span style={{ fontSize: 11 }}>Je Gaji !</span></button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Mgaji Notif ──────────────────────────────────────────────────────────────
+function MgajiNotif({ playerName, gajiCount, onClose }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(6px)", padding: 20 }} onClick={onClose}>
+      <div style={{ background: "linear-gradient(135deg,#7B241C,#C0392B)", borderRadius: 28, padding: "36px 32px", textAlign: "center", maxWidth: 340, width: "100%", boxShadow: "0 0 80px rgba(192,57,43,0.6),0 20px 60px rgba(0,0,0,0.7)", border: "2px solid rgba(231,76,60,0.5)", animation: "pulseIn 0.3s ease-out" }}>
+        <div style={{ fontSize: 64, marginBottom: 8 }}>🔥</div>
+        <div style={{ color: "#fff", fontSize: gajiCount >= 2 ? 28 : 34, fontWeight: 900, fontFamily: "Georgia,serif", marginBottom: 8 }}>{gajiCount >= 2 ? `Mgaji x${gajiCount}` : "Mgaji !"}</div>
+        <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 20, fontWeight: 600, marginBottom: 20 }}>{playerName}</div>
+        <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12 }}>Appuyer pour continuer</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── In-Game History Modal ─────────────────────────────────────────────────────
+function HistoryModal({ players, history, colors, onClose }) {
+  const roundRows = history.filter(h => h.type === "round");
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(6px)", padding: 16 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#1A2535", borderRadius: 24, width: "100%", maxWidth: 460, maxHeight: "85vh", overflow: "hidden", display: "flex", flexDirection: "column", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 20px 60px rgba(0,0,0,0.5)" }}>
+        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 style={{ color: "#F5E6C8", margin: 0, fontSize: 18, fontWeight: 800 }}>📊 Historique</h3>
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "#F5E6C8", borderRadius: 10, width: 32, height: 32, cursor: "pointer", fontSize: 16 }}>×</button>
+        </div>
+        <div style={{ overflowX: "auto", overflowY: "auto", flex: 1 }}>
+          {roundRows.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 40, color: "#8BA0B2" }}><div style={{ fontSize: 40, marginBottom: 12 }}>🎲</div>Aucun tour joué encore</div>
+          ) : (
+            <table style={{ borderCollapse: "collapse", minWidth: "100%" }}>
+              <thead>
+                <tr style={{ background: "rgba(0,0,0,0.3)" }}>
+                  <th style={{ padding: "10px 14px", color: "#8BA0B2", fontSize: 12, textAlign: "left", fontWeight: 600, position: "sticky", left: 0, background: "rgba(15,25,35,0.98)", zIndex: 2, minWidth: 110 }}>JOUEUR</th>
+                  {roundRows.map((_, ri) => <th key={ri} style={{ padding: "10px 12px", color: "#8BA0B2", fontSize: 12, fontWeight: 600, textAlign: "center", whiteSpace: "nowrap" }}>T{ri + 1}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {players.map((player, pi) => (
+                  <tr key={pi} style={{ borderTop: "1px solid rgba(255,255,255,0.05)", background: pi % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)" }}>
+                    <td style={{ padding: "12px 14px", position: "sticky", left: 0, zIndex: 1, background: pi % 2 === 0 ? "#1A2535" : "#1c2840", verticalAlign: "top" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: 26, height: 26, borderRadius: 7, background: colors[pi].bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#fff", flexShrink: 0 }}>{player.name[0].toUpperCase()}</div>
+                        <span style={{ color: "#F5E6C8", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap" }}>{player.name}</span>
+                      </div>
+                      {player.gajiCount >= 1 && <div style={{ marginTop: 4, marginLeft: 34 }}><span style={{ fontSize: 10, background: "rgba(192,57,43,0.25)", color: "#E74C3C", padding: "1px 6px", borderRadius: 6, fontWeight: 700 }}>🔥 {player.gajiCount >= 2 ? `Mgaji x${player.gajiCount}` : "Mgaji"}</span></div>}
+                    </td>
+                    {roundRows.map((row, ri) => {
+                      const entry = row.entries[pi];
+                      if (player.isOut && player.outAtTour !== null && ri >= player.outAtTour) return <td key={ri} style={{ padding: "10px 12px", textAlign: "center", color: "#3A4A5A", fontSize: 14, letterSpacing: "0.1em", fontWeight: 600 }}>— — —</td>;
+                      if (!entry) return <td key={ri} style={{ padding: "10px 12px", textAlign: "center", color: "#4A5568" }}>—</td>;
+                      const { delta, cumul, event, gajiNewCumul, gajiLabel } = entry;
+                      let dColor = "#8BA0B2";
+                      if (delta === -10) dColor = "#27AE60"; else if (delta === 100) dColor = "#E74C3C"; else if (delta < 0) dColor = "#27AE60"; else if (delta > 0) dColor = "#E07B54";
+                      const isBust = event === "gaji_exceeded";
+                      return (
+                        <td key={ri} style={{ padding: "8px 12px", textAlign: "center", verticalAlign: "top" }}>
+                          <div style={{ color: isBust ? "#fff" : "#F5E6C8", fontSize: 14, fontWeight: 800, fontFamily: "Georgia,serif", background: isBust ? "rgba(192,57,43,0.75)" : "transparent", borderRadius: isBust ? 6 : 0, padding: isBust ? "2px 6px" : 0, display: "inline-block" }}>{cumul}</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: dColor, marginTop: 1 }}>{delta > 0 ? `+${delta}` : delta}</div>
+                          {event === "quit" && <div style={{ fontSize: 10, color: "#6B7A8A", marginTop: 2 }}>🚪 Quit</div>}
+                          {isBust && gajiNewCumul !== undefined && (
+                            <div style={{ marginTop: 5, paddingTop: 5, borderTop: "1px solid rgba(192,57,43,0.3)" }}>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: "#E74C3C", fontFamily: "Georgia,serif" }}>{gajiNewCumul}</div>
+                              <div style={{ fontSize: 10, color: "#E74C3C", fontWeight: 700 }}>🔥 {gajiLabel}</div>
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Game Screen ──────────────────────────────────────────────────────────────
+function GameScreen({ game, initialNames, maxScore, onNewGame }) {
+  const makeInitPlayers = () => initialNames.map(name => ({ name, score: 0, isOut: false, outAtTour: null, gajiCount: 0 }));
+
+  const [players, setPlayers] = useState(makeInitPlayers);
+  const [history, setHistory] = useState([]);
+  const [currentRound, setCurrentRound] = useState(initialNames.map(() => null));
+  const [activePlayer, setActivePlayer] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [round, setRound] = useState(1);
+  const [showConfirmNew, setShowConfirmNew] = useState(false);
+  const [tgajiQueue, setTgajiQueue] = useState([]);
+  const [tgajiDecisions, setTgajiDecisions] = useState({});
+  const [mgajiNotif, setMgajiNotif] = useState(null);
+  const [gameOver, setGameOver] = useState(null);
+
+  const colors = PLAYER_COLORS;
+  const activePIs = players.map((p, i) => ({ p, i })).filter(({ p }) => !p.isOut).map(({ i }) => i);
+  const winner = activePIs.length > 0 ? activePIs.reduce((best, i) => players[i].score < players[best].score ? i : best, activePIs[0]) : null;
+  const pendingCount = activePIs.filter(i => currentRound[i] === null).length;
+  const canValidate = pendingCount === 0 && tgajiQueue.length === 0;
+
+  const handlePlayerClick = (i) => {
+    if (players[i].isOut || tgajiQueue.length > 0) return;
+    setActivePlayer({ pi: i, isEdit: currentRound[i] !== null });
+  };
+
+  const handleScoreEntry = (delta) => {
+    const { pi } = activePlayer;
+    setActivePlayer(null);
+    setCurrentRound(cr => cr.map((v, i) => i === pi ? delta : v));
+  };
+
+  const handleValidateTour = () => {
+    if (!canValidate) return;
+    const proposedScores = players.map((p, i) => p.isOut || currentRound[i] === null ? p.score : p.score + currentRound[i]);
+    const busters = activePIs.filter(i => proposedScores[i] >= maxScore).map(i => ({ pi: i, scoreAtLimit: proposedScores[i], delta: currentRound[i] }));
+    const alreadyOutCount = players.filter(p => p.isOut).length;
+
+    if (busters.length >= 2) { commitRound(proposedScores, Object.fromEntries(busters.map(b => [b.pi, "quit"])), true); return; }
+    if (busters.length === 1 && alreadyOutCount >= 1) { commitRound(proposedScores, { [busters[0].pi]: "quit" }, true); return; }
+    if (busters.length === 1) { setTgajiQueue(busters); return; }
+    commitRound(proposedScores, {}, false);
+  };
+
+  const commitRound = (proposedScores, gajiDecisions, forceGameOver = false) => {
+    const nonBusterMax = activePIs.filter(i => !gajiDecisions[i]).reduce((mx, i) => proposedScores[i] > mx ? proposedScores[i] : mx, 0);
+    let newPlayers = [...players];
+    const roundEntries = initialNames.map(() => null);
+
+    activePIs.forEach(i => {
+      const p = players[i]; const d = currentRound[i]; if (d === null) return;
+      const dec = gajiDecisions[i];
+      if (dec === "gaji") {
+        const ngc = p.gajiCount + 1; const bust = proposedScores[i];
+        newPlayers[i] = { ...p, score: nonBusterMax, gajiCount: ngc };
+        roundEntries[i] = { delta: d, cumul: bust, event: "gaji_exceeded", gajiNewCumul: nonBusterMax, gajiLabel: ngc >= 2 ? `Mgaji x${ngc}` : "Mgaji" };
+      } else if (dec === "quit") {
+        const bust = proposedScores[i];
+        newPlayers[i] = { ...p, score: bust, isOut: true, outAtTour: round };
+        roundEntries[i] = { delta: d, cumul: bust, event: "quit" };
+      } else {
+        newPlayers[i] = { ...p, score: proposedScores[i] };
+        roundEntries[i] = { delta: d, cumul: proposedScores[i], event: null };
+      }
+    });
+
+    const newHistory = [...history, { type: "round", entries: roundEntries }];
+    setPlayers(newPlayers);
+    setHistory(newHistory);
+    setCurrentRound(initialNames.map(() => null));
+    setRound(r => r + 1);
+
+    const gajiPlayers = Object.entries(gajiDecisions).filter(([, v]) => v === "gaji").map(([i]) => ({ name: players[i].name, count: newPlayers[i].gajiCount }));
+    if (gajiPlayers.length > 0) setMgajiNotif(gajiPlayers[0]);
+
+    const outPs = newPlayers.filter(p => p.isOut);
+    const activePs = newPlayers.filter(p => !p.isOut);
+    const shouldEnd = forceGameOver || outPs.length >= 2 || activePs.length <= 1;
+
+    if (shouldEnd) {
+      const winners = newPlayers.map((p, i) => ({ ...p, pi: i, colorIdx: i })).filter(p => !p.isOut).sort((a, b) => a.score - b.score);
+      const losers = newPlayers.map((p, i) => ({ ...p, pi: i, colorIdx: i })).filter(p => p.isOut).sort((a, b) => b.score - a.score);
+      const rankings = [...winners, ...losers];
+
+      // Auto-save
+      const record = {
+        id: Date.now(),
+        date: new Date().toISOString(),
+        gameId: game.id,
+        gameName: game.name,
+        rounds: newHistory.filter(h => h.type === "round").length,
+        maxScore,
+        players: newPlayers.map((p, i) => ({ ...p, colorIdx: i })),
+        history: newHistory,
+        winners,
+        losers,
+        rankings,
+      };
+      saveGameRecord(record);
+
+      setTimeout(() => setGameOver({ winners, losers }), gajiPlayers.length > 0 ? 1800 : 400);
+    }
+  };
+
+  const currentTgaji = tgajiQueue[0] || null;
+  const worstForGaji = (() => {
+    if (!currentTgaji) return 0;
+    const bPIs = tgajiQueue.map(t => t.pi);
+    return activePIs.filter(i => !bPIs.includes(i)).reduce((mx, i) => { const p = players[i].score + (currentRound[i] || 0); return p > mx ? p : mx; }, 0);
+  })();
+
+  const handleTgajiDecision = (decision) => {
+    const { pi } = currentTgaji;
+    const newDecisions = { ...tgajiDecisions, [pi]: decision };
+    const newQueue = tgajiQueue.slice(1);
+    if (newQueue.length === 0) {
+      const proposedScores = players.map((p, i) => p.isOut || currentRound[i] === null ? p.score : p.score + currentRound[i]);
+      setTgajiQueue([]); setTgajiDecisions({});
+      commitRound(proposedScores, newDecisions, false);
+    } else { setTgajiQueue(newQueue); setTgajiDecisions(newDecisions); }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(145deg,#0F1923 0%,#1A2535 100%)", position: "relative" }}>
+      <FloatingCards />
+      <div style={{ position: "relative", zIndex: 1 }}>
+        {/* Header */}
+        <div style={{ background: "rgba(0,0,0,0.3)", borderBottom: "1px solid rgba(255,255,255,0.08)", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", backdropFilter: "blur(8px)" }}>
+          <div>
+            <div style={{ color: "#F5E6C8", fontSize: 16, fontWeight: 800, fontFamily: "Georgia,serif", letterSpacing: "0.08em" }}>ERRACHEM</div>
+            <div style={{ color: "#8BA0B2", fontSize: 11, marginTop: 1 }}>{game.icon} {game.name} · Tour {round} · Max <span style={{ color: "#E74C3C", fontWeight: 700 }}>{maxScore}</span> pts</div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setShowHistory(true)} style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", color: "#F5E6C8", borderRadius: 12, padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📊</button>
+            <button onClick={() => setShowConfirmNew(true)} style={{ background: "rgba(192,57,43,0.15)", border: "1px solid rgba(192,57,43,0.3)", color: "#E74C3C", borderRadius: 12, padding: "8px 12px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Nouveau</button>
+          </div>
+        </div>
+
+        {/* Turn progress */}
+        <div style={{ margin: "12px 14px 0", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: "#8BA0B2", fontSize: 11, fontWeight: 600 }}>
+              {canValidate ? "✅ Tous les scores sont saisis" : `⏳ En attente de ${pendingCount} joueur${pendingCount > 1 ? "s" : ""}`}
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+              {activePIs.map(i => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: currentRound[i] !== null ? colors[i].bg : "rgba(255,255,255,0.15)", transition: "background 0.3s" }} />)}
+            </div>
+          </div>
+          {canValidate && (
+            <button onClick={handleValidateTour} style={{ background: "linear-gradient(135deg,#1E8449,#27AE60)", border: "none", color: "#fff", borderRadius: 12, padding: "10px 18px", cursor: "pointer", fontSize: 14, fontWeight: 800, boxShadow: "0 4px 16px rgba(39,174,96,0.4)", whiteSpace: "nowrap", animation: "pulseIn 0.3s ease-out" }}>
+              Valider ✓
+            </button>
+          )}
+        </div>
+
+        {/* Players Grid */}
+        <div style={{ display: "grid", gridTemplateColumns: players.length <= 2 ? "1fr" : "1fr 1fr", gap: 12, padding: 14 }}>
+          {players.map((player, i) => {
+            const color = colors[i]; const isWin = i === winner && activePIs.some(j => players[j].score !== 0);
+            const rd = currentRound[i]; const isOut = player.isOut; const hasScore = rd !== null;
+            const pct = Math.min(100, Math.max(0, (player.score / maxScore) * 100));
+            const previewScore = hasScore ? player.score + rd : null;
+            return (
+              <button key={i} onClick={() => handlePlayerClick(i)} style={{
+                padding: "18px 14px", borderRadius: 20,
+                border: isOut ? "2px solid rgba(255,255,255,0.05)" : hasScore ? `2px solid ${color.bg}88` : `2px solid ${isWin ? color.bg : "rgba(255,255,255,0.08)"}`,
+                background: isOut ? "rgba(255,255,255,0.02)" : hasScore ? `linear-gradient(145deg,${color.bg}18,${color.bg}08)` : isWin ? `linear-gradient(145deg,${color.bg}22,${color.bg}11)` : "rgba(255,255,255,0.04)",
+                cursor: isOut ? "default" : "pointer", transition: "all 0.2s",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 5,
+                boxShadow: isWin && !isOut ? `0 4px 24px ${color.bg}44` : "none",
+                position: "relative", overflow: "hidden", opacity: isOut ? 0.4 : 1,
+              }}>
+                {isWin && !isOut && <div style={{ position: "absolute", top: 10, right: 12, fontSize: 15 }}>👑</div>}
+                {isOut && <div style={{ position: "absolute", top: 10, right: 12, fontSize: 13 }}>🚪</div>}
+                {hasScore && !isOut && <div style={{ position: "absolute", top: 10, right: 12, fontSize: 13 }}>✓</div>}
+                {player.gajiCount >= 1 && !isOut && <div style={{ position: "absolute", top: 10, left: 12, fontSize: 10, background: "rgba(192,57,43,0.3)", color: "#E74C3C", padding: "2px 6px", borderRadius: 8, fontWeight: 800 }}>🔥 {player.gajiCount >= 2 ? `x${player.gajiCount}` : "Mgaji"}</div>}
+                <div style={{ width: 46, height: 46, borderRadius: 13, background: isOut ? "rgba(255,255,255,0.1)" : `linear-gradient(135deg,${color.bg},${color.light})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, fontWeight: 900, color: "#fff", fontFamily: "Georgia,serif", boxShadow: isOut ? "none" : `0 4px 12px ${color.bg}66`, marginTop: 4 }}>
+                  {player.name[0].toUpperCase()}
+                </div>
+                <div style={{ color: isOut ? "#4A6078" : "#B0C4D8", fontSize: 12, fontWeight: 600 }}>{player.name}</div>
+                {isOut ? (
+                  <div style={{ fontSize: 20, color: "#3A4A5A", letterSpacing: "0.25em", fontWeight: 700 }}>— — —</div>
+                ) : (
+                  <div style={{ fontSize: players.length <= 2 ? 56 : 44, fontWeight: 900, color: player.score >= maxScore * 0.8 ? "#E74C3C" : player.score < 0 ? "#27AE60" : "#F5E6C8", fontFamily: "Georgia,serif", lineHeight: 1, textShadow: isWin ? `0 0 20px ${color.bg}` : "none" }}>{player.score}</div>
+                )}
+                {!isOut && <div style={{ width: "75%", height: 3, background: "rgba(255,255,255,0.08)", borderRadius: 2, overflow: "hidden" }}><div style={{ height: "100%", width: `${pct}%`, background: pct >= 80 ? "#E74C3C" : pct >= 50 ? "#E07B54" : "#27AE60", borderRadius: 2, transition: "width 0.4s" }} /></div>}
+                {rd !== null && !isOut && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: rd <= 0 ? "#27AE60" : "#E74C3C", background: rd <= 0 ? "rgba(39,174,96,0.15)" : "rgba(231,76,60,0.15)", padding: "2px 8px", borderRadius: 7 }}>{rd > 0 ? "+" : ""}{rd}</div>
+                    <div style={{ fontSize: 10, color: "#6B7A8A" }}>→</div>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: previewScore >= maxScore * 0.8 ? "#E74C3C" : "#B0C4D8" }}>{previewScore}</div>
+                  </div>
+                )}
+                {!isOut && !hasScore && <div style={{ color: "#4A6078", fontSize: 10, marginTop: 1 }}>Appuyer pour saisir</div>}
+                {!isOut && hasScore && <div style={{ color: "#6B7A8A", fontSize: 10, marginTop: 1 }}>Appuyer pour modifier</div>}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Leaderboard */}
+        <div style={{ margin: "0 14px 24px" }}>
+          <Card style={{ padding: 14 }}>
+            <div style={{ color: "#8BA0B2", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", marginBottom: 10 }}>CLASSEMENT</div>
+            {[...players].map((p, i) => ({ ...p, idx: i })).sort((a, b) => { if (a.isOut && !b.isOut) return 1; if (!a.isOut && b.isOut) return -1; return a.score - b.score; }).map((p, rank) => (
+              <div key={p.idx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: rank < players.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none", opacity: p.isOut ? 0.4 : 1 }}>
+                <div style={{ width: 22, fontSize: 13 }}>{p.isOut ? "🚪" : rank === 0 ? "🥇" : rank === 1 ? "🥈" : rank === 2 ? "🥉" : `${rank + 1}.`}</div>
+                <div style={{ width: 26, height: 26, borderRadius: 7, background: colors[p.idx].bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#fff" }}>{p.name[0].toUpperCase()}</div>
+                <div style={{ color: "#B0C4D8", fontSize: 13, flex: 1 }}>{p.name}</div>
+                {p.isOut ? <div style={{ color: "#3A4A5A", fontSize: 13, letterSpacing: "0.12em" }}>— — —</div> : <div style={{ color: p.score >= maxScore * 0.8 ? "#E74C3C" : p.score < 0 ? "#27AE60" : "#F5E6C8", fontSize: 15, fontWeight: 800, fontFamily: "Georgia,serif" }}>{p.score} pts</div>}
+              </div>
+            ))}
+          </Card>
+        </div>
+      </div>
+
+      {activePlayer !== null && <ScoreModal player={players[activePlayer.pi]} color={colors[activePlayer.pi]} onClose={() => setActivePlayer(null)} onSubmit={handleScoreEntry} isEdit={activePlayer.isEdit} currentDelta={currentRound[activePlayer.pi]} />}
+      {currentTgaji !== null && <TgajiModal player={players[currentTgaji.pi]} color={colors[currentTgaji.pi]} scoreAtLimit={currentTgaji.scoreAtLimit} worstScore={worstForGaji} onGaji={() => handleTgajiDecision("gaji")} onQuit={() => handleTgajiDecision("quit")} />}
+      {mgajiNotif !== null && <MgajiNotif playerName={mgajiNotif.name} gajiCount={mgajiNotif.count} onClose={() => setMgajiNotif(null)} />}
+
+      {showHistory && !gameOver && <HistoryModal players={players} history={history} colors={colors} onClose={() => setShowHistory(false)} />}
+
+      {/* Game Over */}
+      {gameOver && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 4000, background: "linear-gradient(145deg,#0A0F18 0%,#141E2E 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, overflowY: "auto" }}>
+          <FloatingCards />
+          <div style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: 420, textAlign: "center" }}>
+            <div style={{ fontSize: 64, marginBottom: 4, animation: "bounce 0.7s ease-out", filter: "drop-shadow(0 0 30px rgba(218,165,32,0.5))" }}>🏆</div>
+            <div style={{ color: "#DAA520", fontSize: 12, fontWeight: 700, letterSpacing: "0.22em", textTransform: "uppercase", marginBottom: 6 }}>Fin de partie</div>
+            <div style={{ color: "#4A5568", fontSize: 11, marginBottom: 24 }}>Partie sauvegardée automatiquement ✓</div>
+
+            {gameOver.winners.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ color: "#27AE60", fontSize: 11, fontWeight: 700, letterSpacing: "0.15em", marginBottom: 10 }}>🏅 GAGNANTS</div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  {gameOver.winners.map((w, rank) => {
+                    const wc = PLAYER_COLORS[w.pi];
+                    return (
+                      <div key={w.pi} style={{ flex: 1, background: `${wc.bg}28`, border: `2px solid ${wc.bg}99`, borderRadius: 20, padding: "20px 12px", boxShadow: rank === 0 ? `0 0 30px ${wc.bg}44` : "none" }}>
+                        <div style={{ fontSize: 20, marginBottom: 6 }}>{rank === 0 ? "🥇" : "🥈"}</div>
+                        <div style={{ width: 52, height: 52, borderRadius: 16, background: `linear-gradient(135deg,${wc.bg},${wc.light})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 900, color: "#fff", fontFamily: "Georgia,serif", margin: "0 auto 8px", boxShadow: `0 4px 16px ${wc.bg}55` }}>{w.name[0].toUpperCase()}</div>
+                        <div style={{ color: "#F5E6C8", fontSize: 14, fontWeight: 700, marginBottom: 4 }}>{w.name}</div>
+                        <div style={{ color: "#27AE60", fontSize: 22, fontWeight: 900, fontFamily: "Georgia,serif" }}>{w.score}</div>
+                        <div style={{ color: "#4A6078", fontSize: 11 }}>pts</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "14px 0" }}>
+              <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
+              <div style={{ color: "#4A5568", fontSize: 11, fontWeight: 600, letterSpacing: "0.1em" }}>VS</div>
+              <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.08)" }} />
+            </div>
+
+            {gameOver.losers.length > 0 && (
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ color: "#E74C3C", fontSize: 11, fontWeight: 700, letterSpacing: "0.15em", marginBottom: 10 }}>💀 PERDANTS</div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  {gameOver.losers.map((l, rank) => (
+                    <div key={l.pi} style={{ flex: 1, background: "rgba(192,57,43,0.08)", border: "2px solid rgba(192,57,43,0.25)", borderRadius: 20, padding: "20px 12px", opacity: 0.85 }}>
+                      <div style={{ fontSize: 20, marginBottom: 6 }}>{rank === 0 ? "💀" : "☠️"}</div>
+                      <div style={{ width: 52, height: 52, borderRadius: 16, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 900, color: "#4A5568", fontFamily: "Georgia,serif", margin: "0 auto 8px" }}>{l.name[0].toUpperCase()}</div>
+                      <div style={{ color: "#6B7A8A", fontSize: 14, fontWeight: 700, marginBottom: 4 }}>{l.name}</div>
+                      <div style={{ color: "#E74C3C", fontSize: 18, fontWeight: 900, letterSpacing: "0.1em" }}>— — —</div>
+                      <div style={{ color: "#4A5568", fontSize: 10, marginTop: 4 }}>Éliminé</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 12 }}>
+              <button onClick={() => { setGameOver(null); setTimeout(() => setShowHistory(true), 50); }} style={{ flex: 1, padding: "14px", borderRadius: 14, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "#F5E6C8", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>📊 Historique</button>
+              <button onClick={onNewGame} style={{ flex: 2, padding: "14px", borderRadius: 14, background: "linear-gradient(135deg,#C0392B,#E74C3C)", border: "none", color: "#fff", fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: "0 4px 16px rgba(192,57,43,0.4)" }}>🔄 Nouvelle partie</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showConfirmNew && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(6px)" }}>
+          <Card style={{ textAlign: "center", padding: 32 }}>
+            <div style={{ fontSize: 40, marginBottom: 16 }}>🔄</div>
+            <h3 style={{ color: "#F5E6C8", margin: "0 0 8px", fontSize: 20 }}>Nouvelle partie ?</h3>
+            <p style={{ color: "#8BA0B2", margin: "0 0 24px", fontSize: 14 }}>Le score actuel sera perdu définitivement.</p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <Btn variant="ghost" onClick={() => setShowConfirmNew(false)}>Annuler</Btn>
+              <Btn variant="primary" onClick={onNewGame}>Recommencer</Btn>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes float{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-20px) rotate(8deg)}}
+        @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+        @keyframes pulseIn{0%{transform:scale(0.8);opacity:0}60%{transform:scale(1.05)}100%{transform:scale(1);opacity:1}}
+        @keyframes bounce{0%{transform:scale(0.5)}60%{transform:scale(1.2)}100%{transform:scale(1)}}
+        *{box-sizing:border-box}
+        body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+        input:focus{box-shadow:0 0 0 2px rgba(192,57,43,0.4)}
+        button:active{transform:scale(0.97)}
+      `}</style>
+    </div>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
+function App() {
+  const [screen, setScreen] = useState("game-select");
+  const [game, setGame] = useState(null);
+  const [count, setCount] = useState(null);
+  const [names, setNames] = useState([]);
+  const [maxScore, setMaxScore] = useState(500);
+
+  const reset = () => { setScreen("game-select"); setGame(null); setCount(null); setNames([]); setMaxScore(500); };
+
+  if (screen === "history") return <SavedHistoryScreen onBack={() => setScreen("game-select")} />;
+  if (screen === "game-select") return <GameSelectScreen onSelect={g => { setGame(g); setScreen("player-count"); }} onShowHistory={() => setScreen("history")} />;
+  if (screen === "player-count") return <PlayerCountScreen game={game} onSelect={n => { setCount(n); setScreen("player-names"); }} onBack={() => setScreen("game-select")} />;
+  if (screen === "player-names") return <PlayerNamesScreen game={game} playerCount={count} onStart={(ns, ms) => { setNames(ns); setMaxScore(ms); setScreen("game"); }} onBack={() => setScreen("player-count")} />;
+  if (screen === "game") return <GameScreen game={game} initialNames={names} maxScore={maxScore} onNewGame={reset} />;
+}
+
+    // Mount
+    const container = document.getElementById('root');
+    const root = ReactDOM.createRoot(container);
+    root.render(React.createElement(App));
+  </script>
+
+  <!-- Service Worker for offline support -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      const swCode = `
+        const CACHE = 'errachem-v1';
+        self.addEventListener('install', e => {
+          e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./'])));
+          self.skipWaiting();
+        });
+        self.addEventListener('fetch', e => {
+          e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+        });
+      `;
+      const swBlob = new Blob([swCode], {type: 'application/javascript'});
+      const swURL = URL.createObjectURL(swBlob);
+      navigator.serviceWorker.register(swURL).catch(() => {});
+    }
+  </script>
+</body>
+</html>
